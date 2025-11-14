@@ -18,5 +18,8 @@ Pillow              # 图像处理库
 # --- 4. 嵌入模型与工具 ---
 sentence-transformers # 用于 m3e-base 文本嵌入
 python-dotenv         # 加载环境变量
+python-docx           # 处理 docx 文档
+python-pptx          # 处理 pptx 文档
+pdfplumber           # 处理 PDF 文档
 tqdm                  # 进度条
 FlagEmbedding
