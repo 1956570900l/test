@@ -1,0 +1,20 @@
+# .gitignore
+
+# 1. 忽略 Python 虚拟环境
+.venv/
+
+# 2. 忽略你的 API 密钥 (极其重要！)
+.env
+
+# 3. 忽略 Milvus 数据库的数据 (它非常大)
+milvus_data/
+
+# 4. 忽略你本地生成的输出 (比如图片和初赛结果)
+output/
+
+# 5. 忽略 Python 缓存
+__pycache__/
+*.pyc
+
+# 6. 忽略 VS Code 缓存
+.vscode/
