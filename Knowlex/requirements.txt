@@ -19,3 +19,4 @@ Pillow              # 图像处理库
 sentence-transformers # 用于 m3e-base 文本嵌入
 python-dotenv         # 加载环境变量
 tqdm                  # 进度条
+FlagEmbedding

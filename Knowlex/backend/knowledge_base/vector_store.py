@@ -1,131 +1,164 @@
-# backend\knowledge_base\vector_store.py
-import time
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, MilvusClient
+# backend/knowledge_base/vector_store.py
+# (V2 - 图文多模态版)
+
+from pymilvus import MilvusClient, FieldSchema, CollectionSchema, DataType
 from langchain_community.vectorstores import Milvus
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
-from typing import List
+from typing import List, Dict
+from PIL import Image
+import torch
+from transformers import CLIPProcessor, CLIPModel
 
 # 导入你的配置
-# (假设你的 config.py 在 utils/config.py)
 from utils import config 
 
-# --- 1. 嵌入模型 ---
-# RAG 链和数据入库必须使用同一个模型
-def get_embedding_model():
-    """获取文本嵌入模型"""
-    print("正在加载嵌入模型...")
+# --- 1. 嵌入模型加载 ---
+
+def get_text_embedding_model():
+    """获取文本嵌入模型 (m3e-base)"""
+    print("正在加载 文本嵌入模型...")
     return HuggingFaceEmbeddings(
-        model_name="moka-ai/m3e-base", # 示例: 768 维
-        model_kwargs={'device': 'cpu'}
+        model_name=config.EMBEDDING_MODEL_NAME, 
+        model_kwargs={'device': 'cpu'} # 嵌入计算用 CPU
     )
 
-# --- 2. Milvus 初始化 (你已经开始写的部分) ---
+def get_image_embedding_models():
+    """获取图片嵌入模型 (CLIP)"""
+    print("正在加载 图片嵌入模型 (CLIP)...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = CLIPModel.from_pretrained(config.IMAGE_EMBEDDING_MODEL).to(device)
+    processor = CLIPProcessor.from_pretrained(config.IMAGE_EMBEDDING_MODEL)
+    return model, processor, device
+
+# --- 2. Milvus 初始化 (升级版) ---
 def initialize_milvus():
     """
     (后端启动时调用)
-    检查并创建 Milvus Collection (表) 和 Schema (结构)
+    检查并创建 两个 Milvus 集合 (文本 + 图片)
     """
     print("正在连接 Milvus...")
-    # 使用 MilvusClient 更简单
     client = MilvusClient(uri=config.MILVUS_URI)
     
-    # 1. 定义 Schema (你照片里的代码)
-    # 主键
-    field_pk = FieldSchema(name="pk", dtype=DataType.VARCHAR, is_primary=True, auto_id=True, max_length=100)
-    # 嵌入
-    field_embedding = FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=config.TEXT_EMBEDDING_DIM)
-    # 原始文本
-    field_text = FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535)
+    # 1. 定义 Schema - 文本
+    text_schema = CollectionSchema([
+        FieldSchema(name="pk", dtype=DataType.VARCHAR, is_primary=True, auto_id=True, max_length=100),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=config.TEXT_EMBEDDING_DIM),
+        FieldSchema(name="chunk_text", dtype=DataType.VARCHAR, max_length=65535),
+        FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=500),
+        FieldSchema(name="page", dtype=DataType.INT64),
+        FieldSchema(name="clause_id", dtype=DataType.VARCHAR, max_length=100, default_value=""),
+    ], description="知识库 文本块")
     
-    # --- 架构师要求的元数据 ---
-    field_doc_name = FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=500)
-    field_page = FieldSchema(name="page", dtype=DataType.INT64)
-    # (我再加一个 clause_id，架构图里提到了)
-    field_clause_id = FieldSchema(name="clause_id", dtype=DataType.VARCHAR, max_length=100, default_value="")
-    
-    # 2. 创建 CollectionSchema
-    schema = CollectionSchema(
-        fields=[field_pk, field_embedding, field_text, field_doc_name, field_page, field_clause_id],
-        description="Knowlex 知识库文本"
-    )
-    
-    # 3. 创建 Collection
-    collection_name = config.TEXT_COLLECTION_NAME
-    if not client.has_collection(collection_name):
-        client.create_collection(
-            collection_name, 
-            schema, 
-            consistency_level="Strong" # 强一致性
-        )
-        
-        # 4. 为 embedding 字段创建索引
-        print(f"正在为 {collection_name} 创建索引...")
-        client.create_index(
-            collection_name, 
-            "embedding", 
-            {"index_type": "IVF_FLAT", "params": {"nlist": 128}, "metric_type": "L2"}
-        )
-    else:
-        print(f"Collection '{collection_name}' 已存在。")
+    # 2. 定义 Schema - 图片
+    image_schema = CollectionSchema([
+        FieldSchema(name="pk", dtype=DataType.VARCHAR, is_primary=True, auto_id=True, max_length=100),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=config.IMAGE_EMBEDDING_DIM),
+        FieldSchema(name="image_path", dtype=DataType.VARCHAR, max_length=1000), # 存储图片路径
+        FieldSchema(name="doc_name", dtype=DataType.VARCHAR, max_length=500),
+        FieldSchema(name="page", dtype=DataType.INT64),
+    ], description="知识库 图片")
 
-    # 5. 加载 Collection 到内存
-    client.load_collection(collection_name)
-    print(f"Collection '{collection_name}' 加载到内存。")
+    # 3. 创建 文本集合
+    collection_name_text = config.TEXT_COLLECTION_NAME
+    if not client.has_collection(collection_name_text):
+        client.create_collection(collection_name_text, text_schema, consistency_level="Strong")
+        client.create_index(collection_name_text, "embedding", 
+                            {"index_type": "IVF_FLAT", "params": {"nlist": 128}, "metric_type": "L2"})
+        print(f"创建 文本集合: {collection_name_text}")
+    
+    # 4. 创建 图片集合
+    collection_name_image = config.IMAGE_COLLECTION_NAME
+    if not client.has_collection(collection_name_image):
+        client.create_collection(collection_name_image, image_schema, consistency_level="Strong")
+        client.create_index(collection_name_image, "embedding", 
+                            {"index_type": "IVF_FLAT", "params": {"nlist": 128}, "metric_type": "L2"})
+        print(f"创建 图片集合: {collection_name_image}")
 
-# --- 3. 数据写入功能 (给 pdf_processor.py 调用) ---
-def add_documents_to_milvus(client: MilvusClient, documents: List[Document]):
-    """
-    将 LangChain Document 列表批量插入 Milvus
-    """
-    if not documents:
+    # 5. 加载集合到内存
+    client.load_collection(collection_name_text)
+    client.load_collection(collection_name_image)
+    print(f"Milvus 集合 '{collection_name_text}' 和 '{collection_name_image}' 加载到内存。")
+    return client
+
+# --- 3. 数据写入功能 (升级版) ---
+
+def add_text_documents(client: MilvusClient, text_docs: List[Document]):
+    """将 LangChain 文本块 批量插入 Milvus"""
+    if not text_docs:
+        print("没有 文本块 需要插入。")
         return
-
-    embeddings_model = get_embedding_model()
+    
+    embeddings_model = get_text_embedding_model()
     data = []
+    print(f"准备插入 {len(text_docs)} 条 文本块...")
     
-    print(f"准备插入 {len(documents)} 条数据...")
-    
-    # 转换数据格式
-    for doc in documents:
+    for doc in text_docs:
         meta = doc.metadata
-        # 检查元数据是否符合架构要求
-        if "doc_name" not in meta or "page" not in meta:
-            print(f"警告: 文档缺少元数据: {doc.page_content[:20]}...")
-            continue
-            
         data.append({
             "chunk_text": doc.page_content,
-            "embedding": embeddings_model.embed_query(doc.page_content), # 实时嵌入
+            "embedding": embeddings_model.embed_query(doc.page_content),
             "doc_name": meta.get("doc_name"),
             "page": meta.get("page"),
             "clause_id": meta.get("clause_id", "")
         })
     
-    if not data:
-        print("没有可插入的数据。")
+    client.insert(collection_name=config.TEXT_COLLECTION_NAME, data=data)
+    print(f"{len(data)} 条 文本块 插入 Milvus 成功。")
+    client.flush([config.TEXT_COLLECTION_NAME])
+
+def add_image_documents(client: MilvusClient, image_infos: List[Dict]):
+    """将 图片元数据 批量插入 Milvus"""
+    if not image_infos:
+        print("没有 图片 需要插入。")
         return
 
-    print(f"正在向 Milvus 批量插入 {len(data)} 条数据...")
-    client.insert(
-        collection_name=config.TEXT_COLLECTION_NAME,
-        data=data
-    )
-    print("数据插入 Milvus 成功。")
-    client.flush([config.TEXT_COLLECTION_NAME]) # 确保数据可被搜索
+    model, processor, device = get_image_embedding_models()
+    data = []
+    print(f"准备插入 {len(image_infos)} 张 图片...")
+
+    for info in image_infos:
+        try:
+            # 1. 打开图片
+            img = Image.open(info['image_path']).convert("RGB")
+            
+            # 2. 用 CLIP 编码
+            inputs = processor(images=img, return_tensors="pt", padding=True).to(device)
+            with torch.no_grad():
+                image_features = model.get_image_features(**inputs)
+            
+            embedding = image_features[0].cpu().numpy().tolist() # 获取向量
+            
+            # 3. 准备数据
+            data.append({
+                "image_path": info['image_path'],
+                "embedding": embedding,
+                "doc_name": info.get("doc_name"),
+                "page": info.get("page")
+            })
+        except Exception as e:
+            print(f"警告: 处理图片 {info['image_path']} 失败: {e}")
+
+    if not data:
+        print("没有图片数据被成功处理。")
+        return
+
+    client.insert(collection_name=config.IMAGE_COLLECTION_NAME, data=data)
+    print(f"{len(data)} 张 图片 插入 Milvus 成功。")
+    client.flush([config.IMAGE_COLLECTION_NAME])
 
 
-# --- 4. 检索功能 (给 rag_chain.py 调用) ---
-def get_langchain_milvus_store():
-    """
-    获取一个 LangChain 兼容的 Milvus 向量存储实例
-    """
-    embeddings = get_embedding_model()
+# --- 4. 检索功能 (为 RAG 链准备) ---
+
+def get_text_retriever():
+    """获取 文本检索器 (LangChain)"""
+    embeddings = get_text_embedding_model()
     store = Milvus(
         embedding_function=embeddings,
         connection_args={"uri": config.MILVUS_URI},
         collection_name=config.TEXT_COLLECTION_NAME,
-        text_field="chunk_text", # 告诉 LangChain 我们的文本字段叫 'chunk_text'
-        auto_id=True, # 使用 Milvus 的 auto_id
+        text_field="chunk_text",
+        auto_id=True,
     )
-    return store
+    return store.as_retriever(search_kwargs={"k": 10}) # 召回10个，后续 rerank
+
