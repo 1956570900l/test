@@ -1,0 +1,21 @@
+# requirements.txt
+
+# --- 1. 核心框架 (来自架构图) ---
+langchain
+langchain-openai
+[span_0](start_span)pymilvus             # 架构师要求, 替换 chromadb[span_0](end_span)
+
+# -[span_1](start_span)-- 2. API 接口 (来自 api/main.py)[span_1](end_span) ---
+fastapi
+uvicorn[standard]
+
+# --- 3. 图文多模态升级 (来自竞赛.docx要求) ---
+PyMuPDF             # 用于 PDF 提取文本和图片
+transformers        # HgingFace 库, 用于加载 CLIP
+torch               # PyTorch (CLIP 运行需要)
+Pillow              # 图像处理库
+
+# --- 4. 嵌入模型与工具 ---
+sentence-transformers # 用于 m3e-base 文本嵌入
+python-dotenv         # 加载环境变量
+tqdm                  # 进度条
