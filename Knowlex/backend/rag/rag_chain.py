@@ -3,7 +3,7 @@
 from langchain.chains import RetrievalQA
 from langchain_openai import ChatOpenAI
 # 导入我们新的 vector_store 模块
-from backend import vector_store 
+from backend.Knoledge_base import vector_store 
 
 def get_rag_chain():
     """

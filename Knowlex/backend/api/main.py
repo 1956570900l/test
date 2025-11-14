@@ -2,7 +2,8 @@
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from backend import vector_store, pdf_processor # 导入你的模块
+from backend.Knowledge_base import vector_store # 导入你的模块
+from backend.data_process_base import pdf_processor
 from rag.rag_chain import rag_chain # 导入已创建的 RAG 链实例
 from utils import config
 import os

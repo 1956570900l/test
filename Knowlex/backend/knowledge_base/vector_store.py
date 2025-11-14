@@ -1,5 +1,4 @@
-# backend/vector_store.py
-
+# backend\knowledge_base\vector_store.py
 import time
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, MilvusClient
 from langchain_community.vectorstores import Milvus
