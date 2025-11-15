@@ -1,0 +1,24 @@
+version: '3.8'
+services:
+  weaviate:
+    # 选择稳定社区版（v1.24.6），适配Python客户端weaviate-client==4.5.3
+    image: semitechnologies/weaviate:1.24.6
+    container_name: weaviate-engineering  # 容器名，方便识别
+    restart: always  # 开机自动启动，避免手动重启
+    environment:
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true  # 关闭认证（开发环境简化）
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate  # 容器内数据存储路径
+      - DEFAULT_VECTORIZER_MODULE=none  # 向量由本地模型生成（不用Weaviate内置向量器）
+      - ENABLE_MODULES=none  # 关闭额外模块，轻量化运行
+    volumes:
+      # 数据持久化：项目内weaviate_data文件夹映射到容器内，删除容器不丢数据
+      - ./weaviate_data:/var/lib/weaviate
+    ports:
+      # 端口映射：本地8080端口→容器8080端口（Weaviate服务端口）
+      - "8080:8080"
+    networks:
+      - weaviate-network  # 独立网络，避免端口冲突
+
+networks:
+  weaviate-network:
+    driver: bridge  # 桥接网络，本地程序可直接访问
